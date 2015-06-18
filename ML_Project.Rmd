@@ -1,0 +1,114 @@
+---
+title: "Machine Learning Project"
+author: "mzhao"
+date: "Tuesday, June 09, 2015"
+output: html_document
+---
+In this report we'll use a dataset which contains the measurements taken from a group of people during a particular activity to build a model and estimate how well the activity is. The dataset is from http://groupware.les.inf.puc-rio.br/har.
+
+### Load and clean data
+
+The data are taken from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. First, we need to load and clean the data. The dataset is already downloaded in the local disk.
+
+```{r,echo=FALSE}
+require(knitr)
+library(caret)
+library(kernlab)
+library(stringr)
+````
+
+Load the training and testing data.
+
+```{r}
+raw<-read.csv("pml-training.csv")
+test<-read.csv("pml-testing.csv")
+size<-dim(raw)
+size
+```
+
+The training data has `r size[1]` observations and `r size[2]` variables. The variables are too many for training and might not be useful in our model building process. Also there are many missing values in the dataset. We need to extract only some of the variables to use as the predictors for our model and get rid of the missing values.
+
+```{r}
+#replace missing values with "NA"
+raw[raw==""]<-NA
+#Find the columns contain only NA and "#DIV/0!"
+cNa<-colSums(is.na(raw)|raw=="#DIV/0!")>1
+#extract only the column without NA
+data<-raw[,!cNa]
+test.data<-test[,!cNa]
+#data from 4 accelerometers 
+cvar<-grepl("belt|arm|dumbbell",colnames(data))
+data<-data[,cvar]
+data$classe<-raw$classe
+test.data<-test.data[,cvar]
+
+```
+
+We only keep the variables which contain the measurements from 4 accelerometers  on the belt, forearm, arm, and dumbell as the predictors to produce the class because they are the most relevant to the performance of the activity. 
+
+##Cross validation
+
+To build our model we first seperate the training data into two parts: training set for model building and testing set for cross validation. The training set consists of 50% of the total observation and the test set contains the rest of 50%. We choose $k-fold (k=3)$ as resampling method for model training process and repeat 5 times as it should increase the training model accuracy.
+
+The training model we use is treebag method in the caret package.
+
+```{r}
+set.seed(1232)
+inTrain<-createDataPartition(y=data$classe,p=0.5,list=FALSE)
+ training<-data[inTrain,]
+ testing<-data[-inTrain,]
+
+if(!file.exists("myModel.rds")){
+  ctrl<-trainControl(method="repeatedcv",number=3,repeats=5,classProbs=TRUE)
+modelFit<-train(classe ~ . , data=training, method="treebag",trControl=ctrl)
+ saveRDS(modelFit,"myModel.rds") 
+}
+
+ modelFit<-readRDS("myModel.rds")
+
+```
+
+
+After model training finishes let's first look at how well the model fits with the training data.
+
+```{r}
+train<-predict(modelFit,newdata=training)
+confusionMatrix(train,training$classe)
+```
+
+The accuracy is $>99%$ and Kappa is $>0.99$ which means the model is very accurate in predicting the training data set. Now we try it on the testing set to see how well the model performs out of the training sample. The accuracy  on the testing data is expected to decrease.
+
+```{r}
+pred<-predict(modelFit,newdata=testing)
+confusionMatrix(pred,testing$classe)
+```
+The accuracy is $0.9838$ and $Kappa : 0.9795$.  It is still a very good result although the accuracy dropped slightly. The result is consistant  with our expectation because out-sample-error is always greater than in-sample-error.
+
+### Predict the test data with the model
+
+Now we'll classify the 20 testing cases with the model and write the prediction into files for submission.
+
+
+```{r}
+test.predict<-predict(modelFit,newdata=test.data)
+test$classe<-test.predict
+test[,c("user_name","cvtd_timestamp","classe")]
+```
+
+
+```{r,echo=FALSE}
+answers<-test.predict
+pml_write_files <- function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("data/problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+if(!file.exists("data"))
+  {
+  dir.create("data")
+  pml_write_files(answers)
+  }
+
+```
